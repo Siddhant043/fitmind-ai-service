@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Test with coverage
+        run: npm run test:coverage
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+
+      - name: Coverage gate
+        run: |
+          node -e "
+            const fs = require('fs');
+            const summary = JSON.parse(fs.readFileSync('./coverage/coverage-summary.json', 'utf8'));
+            const total = summary.total;
+            const fail = [];
+            if (total.lines.pct < 75) fail.push('lines: ' + total.lines.pct + '%');
+            if (total.functions.pct < 75) fail.push('functions: ' + total.functions.pct + '%');
+            if (total.branches.pct < 75) fail.push('branches: ' + total.branches.pct + '%');
+            if (fail.length) { console.error('Coverage gate failed:', fail.join(', ')); process.exit(1); }
+            console.log('Coverage gate passed.');
+          "
+        continue-on-error: true

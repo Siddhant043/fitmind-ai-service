@@ -1,0 +1,4 @@
+npx lint-staged
+if find src -name "*.test.ts" | grep -q .; then
+  npx vitest run --changed
+fi
