@@ -1,1 +1,1 @@
-// placeholder — Phase 8
+export { startMealAnalyzerWorker } from './meal-analyzer.worker.js'
