@@ -1,8 +1,40 @@
 import { z } from 'zod'
 
-export const MEAL_ANALYZER_SYSTEM_PROMPT = `You are a world-class certified sports nutritionist and registered dietitian specializing in South Asian and Indian cuisine, as well as general global dietary patterns.
+export interface MealAnalyzerUserContext {
+  goal: string | null
+  tdee: number | null
+  macroTargets: {
+    calories: number
+    protein_g: number
+    carbs_g: number
+    fats_g: number
+  } | null
+  todayCalories: number
+  todayProteinG: number
+  activePlanName: string | null
+}
+
+export function buildMealAnalyzerSystemPrompt(userContext: MealAnalyzerUserContext | null): string {
+  const contextBlock = userContext
+    ? `
+User profile for personalised feedback:
+- Fitness goal: ${userContext.goal ?? 'not set'}
+- TDEE: ${userContext.tdee ?? 'unknown'} kcal/day
+- Daily macro targets: ${
+        userContext.macroTargets
+          ? `${userContext.macroTargets.calories} kcal, P${userContext.macroTargets.protein_g}g C${userContext.macroTargets.carbs_g}g F${userContext.macroTargets.fats_g}g`
+          : 'not set'
+      }
+- Calories logged today (before this meal): ${userContext.todayCalories} kcal
+- Protein logged today (before this meal): ${userContext.todayProteinG} g
+- Active workout plan: ${userContext.activePlanName ?? 'none'}`
+    : `
+No user profile context is available. Write a generic but encouraging mealFeedback based on the meal macros alone. Set workoutSuggestion to null.`
+
+  return `You are a world-class certified sports nutritionist and registered dietitian specializing in South Asian and Indian cuisine, as well as general global dietary patterns.
 
 Your task is to analyze an image of a meal (or a text description of a meal, or both) and accurately estimate the macronutrient breakdown.
+${contextBlock}
 
 Guidelines for South Asian/Indian Foods:
 1. **Flatbreads & Roti**: Assume standard homemade Roti/Chapati (without ghee) is around 70-80 kcal, 2-3g protein, 15g carbs, 0.5g fat. Stuffed Parathas, Butter Naans, and Bhaturas have significantly higher calorie and fat counts due to added oils/butter/ghee.
@@ -17,7 +49,12 @@ Important Rules:
 - Calculate the total macros of the meal. Ensure the sum of individual food item macros equals the final overall macros block.
 - For confidence score: set between 0.0 (very unclear/insufficient info) and 1.0 (clear picture and detailed text). If only an image is provided without text, the confidence will usually be lower (0.5 - 0.7) compared to when both are provided.
 - Provide practical and actionable nutrition advice in the notes (e.g., "Good protein source, but consider swapping butter naan for roti next time to save fats").
+- Write mealFeedback: a 1-2 sentence personalised insight comparing this meal's macros to the user's daily targets and fitness goal. Be specific with numbers and percentages when targets are available.
+- Write workoutSuggestion only when this meal creates a caloric surplus of ≥ 300 kcal above a fair single-meal share of the user's daily calorie target (daily target ÷ 3). Otherwise set workoutSuggestion to null. When present, suggest a concrete cardio exercise (e.g. Cycling, Brisk Walking) with durationMinutes and estimatedCalsBurned that would offset roughly half the surplus, plus a rationale referencing the meal calories.
 - Always respond using the structured schema tool call.`
+}
+
+export const MEAL_ANALYZER_SYSTEM_PROMPT = buildMealAnalyzerSystemPrompt(null)
 
 export const mealAnalyzerOutputSchema = z.object({
   foods_detected: z
@@ -66,6 +103,19 @@ export const mealAnalyzerOutputSchema = z.object({
     .describe('Aggregated macronutrient totals for the entire meal'),
   confidence: z.number().min(0).max(1).describe('Estimation confidence level (0.0 to 1.0)'),
   notes: z.string().describe('Nutrition analysis summary, details, and suggestions'),
+  mealFeedback: z
+    .string()
+    .describe('1-2 sentence personalised insight relative to user macro targets and fitness goal'),
+  workoutSuggestion: z
+    .object({
+      exerciseName: z.string().describe('Cardio exercise name, e.g. "Cycling"'),
+      durationMinutes: z.number().int().min(1).describe('Suggested duration in minutes'),
+      estimatedCalsBurned: z.number().int().nonnegative().describe('Estimated calories burned'),
+      rationale: z.string().describe('Why this workout offsets the meal surplus'),
+    })
+    .nullable()
+    .optional()
+    .describe('Concrete workout offset suggestion; null when surplus is below threshold'),
 })
 
 export type MealAnalyzerOutput = z.infer<typeof mealAnalyzerOutputSchema>

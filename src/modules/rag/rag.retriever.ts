@@ -1,7 +1,7 @@
 import crypto from 'crypto'
-import { GoogleGenerativeAIEmbeddings } from '@langchain/google-genai'
 import { CohereClient } from 'cohere-ai'
 import { HumanMessage, SystemMessage } from '@langchain/core/messages'
+import { buildEmbeddings } from '../../providers/embedding-provider.factory.js'
 import { buildPrimaryModel } from '../../providers/llm-provider.factory.js'
 import { getIndex } from './rag.client.js'
 import type { RagNamespace } from './rag.client.js'
@@ -11,12 +11,7 @@ const RAG_CACHE_TTL = 21600 // 6 hours
 const TOP_K = 20
 const RERANK_TOP_N = 5
 
-const embeddings = new GoogleGenerativeAIEmbeddings({
-  model: 'text-embedding-004',
-  apiKey: process.env.GEMINI_API_KEY,
-})
-
-const cohere = new CohereClient({ token: process.env.COHERE_API_KEY })
+const embeddings = buildEmbeddings()
 
 async function generateHyDE(query: string): Promise<string> {
   const model = buildPrimaryModel('fast')
@@ -63,6 +58,44 @@ async function embedAndSearch(
   }))
 }
 
+function mergeCandidatesByHighestScore(
+  allSearches: Array<Array<{ text: string; score: number }>>,
+): string[] {
+  const candidateScores = new Map<string, number>()
+
+  for (const results of allSearches) {
+    for (const result of results) {
+      if (!result.text) continue
+      const existingScore = candidateScores.get(result.text) ?? -Infinity
+      if (result.score > existingScore) {
+        candidateScores.set(result.text, result.score)
+      }
+    }
+  }
+
+  return [...candidateScores.entries()].sort((a, b) => b[1] - a[1]).map(([text]) => text)
+}
+
+async function rerankCandidates(query: string, candidates: string[]): Promise<string[]> {
+  const cohereApiKey = process.env.COHERE_API_KEY
+  if (!cohereApiKey) {
+    return candidates.slice(0, RERANK_TOP_N)
+  }
+
+  const cohere = new CohereClient({ token: cohereApiKey })
+  const rerankResult = await cohere.rerank({
+    model: 'rerank-english-v3.0',
+    query,
+    documents: candidates,
+    topN: RERANK_TOP_N,
+  })
+
+  return rerankResult.results
+    .sort((a, b) => a.index - b.index)
+    .map((r) => candidates[r.index]!)
+    .filter(Boolean)
+}
+
 export async function retrieveWithRerank(
   query: string,
   namespace: RagNamespace,
@@ -81,37 +114,15 @@ export async function retrieveWithRerank(
     generateQueryVariants(query),
   ])
 
-  // Retrieve from all variants + HyDE in parallel, union-merge deduplicated by text
   const allSearches = await Promise.all([
     embedAndSearch(hydeAnswer, namespace),
     ...queryVariants.map((v) => embedAndSearch(v, namespace)),
   ])
 
-  const seen = new Set<string>()
-  const candidates: string[] = []
-  for (const results of allSearches) {
-    for (const r of results) {
-      if (r.text && !seen.has(r.text)) {
-        seen.add(r.text)
-        candidates.push(r.text)
-      }
-    }
-  }
-
+  const candidates = mergeCandidatesByHighestScore(allSearches)
   if (candidates.length === 0) return []
 
-  // Cohere rerank
-  const rerankResult = await cohere.rerank({
-    model: 'rerank-english-v3.0',
-    query,
-    documents: candidates,
-    topN: RERANK_TOP_N,
-  })
-
-  const topPassages = rerankResult.results
-    .sort((a, b) => a.index - b.index)
-    .map((r) => candidates[r.index]!)
-    .filter(Boolean)
+  const topPassages = await rerankCandidates(query, candidates)
 
   await redis.set(cacheKey, JSON.stringify(topPassages), 'EX', RAG_CACHE_TTL)
   return topPassages

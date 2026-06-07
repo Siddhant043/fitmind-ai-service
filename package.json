@@ -12,7 +12,8 @@
     "test:coverage": "vitest run --coverage --passWithNoTests",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
-    "prepare": "husky"
+    "prepare": "husky",
+    "create-local-pinecone-index": "node --env-file=.env --import=tsx/esm scripts/create-local-pinecone-index.ts"
   },
   "dependencies": {
     "@fastify/cors": "^9.0.1",
@@ -21,6 +22,7 @@
     "@langchain/core": "^0.3.0",
     "@langchain/google-genai": "^0.1.8",
     "@langchain/langgraph": "^0.2.0",
+    "@langchain/ollama": "^0.2.4",
     "@langchain/openai": "^0.3.0",
     "@pinecone-database/pinecone": "^4.0.0",
     "@types/node-cron": "^3.0.11",

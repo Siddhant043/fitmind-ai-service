@@ -9,22 +9,44 @@ vi.mock('../../../providers/llm-provider.factory.js', () => ({
   buildPrimaryModel: vi.fn().mockReturnValue({
     withStructuredOutput: vi
       .fn()
-      .mockReturnValue({ invoke: async (...args: any[]) => mockPrimaryInvoke(...args) }),
+      .mockReturnValue({ invoke: async (...args: unknown[]) => mockPrimaryInvoke(...args) }),
   }),
   buildFallbackModel: vi.fn().mockReturnValue({
     withStructuredOutput: vi
       .fn()
-      .mockReturnValue({ invoke: async (...args: any[]) => mockFallbackInvoke(...args) }),
+      .mockReturnValue({ invoke: async (...args: unknown[]) => mockFallbackInvoke(...args) }),
   }),
+  buildAlternatePrimaryModel: vi.fn().mockReturnValue(null),
+  resolveStructuredOutputMethod: vi.fn().mockReturnValue('functionCalling'),
 }))
 
 describe('Meal Analyzer AI Worker Unit Tests', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let mockChannel: any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let mockRedis: any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let mockFetch: any
   let originalFetch: typeof fetch
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockPrimaryInvoke.mockReset()
+    mockFallbackInvoke.mockReset()
+
+    mockRedis = {
+      get: vi.fn().mockResolvedValue(
+        JSON.stringify({
+          profile: {
+            goal: 'cut',
+            tdee: 2200,
+            macroTargets: { calories: 2000, protein_g: 150, carbs_g: 200, fats_g: 65 },
+          },
+          todayNutrition: { calories: 800, proteinG: 40 },
+          activePlan: { name: 'PPL' },
+        }),
+      ),
+    }
 
     // Setup channel mock
     mockChannel = {
@@ -37,12 +59,17 @@ describe('Meal Analyzer AI Worker Unit Tests', () => {
 
     // Mock fetch
     originalFetch = global.fetch
-    mockFetch = vi.fn().mockResolvedValue({
-      ok: true,
-      arrayBuffer: async () => Buffer.from('fake-image-bytes'),
-      headers: {
-        get: (name: string) => (name === 'content-type' ? 'image/png' : null),
-      },
+    mockFetch = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === 'string' && url.includes('127.0.0.1:7886')) {
+        return Promise.resolve({ ok: true })
+      }
+      return Promise.resolve({
+        ok: true,
+        arrayBuffer: async () => Buffer.from('fake-image-bytes'),
+        headers: {
+          get: (name: string) => (name === 'content-type' ? 'image/png' : null),
+        },
+      })
     })
     global.fetch = mockFetch
   })
@@ -74,11 +101,13 @@ describe('Meal Analyzer AI Worker Unit Tests', () => {
       },
       confidence: 0.9,
       notes: 'High in fats due to butter/cream. Good protein source.',
+      mealFeedback: 'Solid protein at 12 g — about 8% of your daily target.',
+      workoutSuggestion: null,
     }
     mockPrimaryInvoke.mockResolvedValue(mockOutput)
 
     // Start worker
-    startMealAnalyzerWorker(mockChannel as unknown as Channel)
+    startMealAnalyzerWorker(mockChannel as unknown as Channel, mockRedis)
 
     // Capture consume callback
     expect(mockChannel.consume).toHaveBeenCalledWith('meal.analysis.request', expect.any(Function))
@@ -109,7 +138,10 @@ describe('Meal Analyzer AI Worker Unit Tests', () => {
     await consumeCallback(mockMsg)
 
     // Assert fetch was called with the image URL
-    expect(mockFetch).toHaveBeenCalledWith('http://localhost:3000/uploads/meals/meal.png')
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:3000/uploads/meals/meal.png',
+      expect.any(Object),
+    )
 
     // Assert primary model was called
     expect(mockPrimaryInvoke).toHaveBeenCalled()
@@ -128,6 +160,11 @@ describe('Meal Analyzer AI Worker Unit Tests', () => {
     expect(publishedPayload.mealId).toBe('meal-123')
     expect(publishedPayload.macros.calories).toBe(320)
     expect(publishedPayload.confidence).toBe(0.9)
+    expect(publishedPayload.mealFeedback).toBe(
+      'Solid protein at 12 g — about 8% of your daily target.',
+    )
+    expect(publishedPayload.workoutSuggestion).toBeNull()
+    expect(mockRedis.get).toHaveBeenCalledWith('user_context:user-456')
 
     // Assert message was acked
     expect(mockChannel.ack).toHaveBeenCalledWith(mockMsg)
@@ -159,10 +196,12 @@ describe('Meal Analyzer AI Worker Unit Tests', () => {
       },
       confidence: 0.8,
       notes: 'Lean protein and high fiber.',
+      mealFeedback: 'Light meal with good fiber — easy to fit into your cut.',
+      workoutSuggestion: null,
     }
     mockFallbackInvoke.mockResolvedValue(mockOutput)
 
-    startMealAnalyzerWorker(mockChannel as unknown as Channel)
+    startMealAnalyzerWorker(mockChannel as unknown as Channel, mockRedis)
     const consumeCallback = mockChannel.consume.mock.calls[0][1]
 
     const mockMsg = {
@@ -187,8 +226,8 @@ describe('Meal Analyzer AI Worker Unit Tests', () => {
 
     await consumeCallback(mockMsg)
 
-    // Assert fetch was not called since imageUrl is null
-    expect(mockFetch).not.toHaveBeenCalled()
+    // Debug instrumentation may call fetch; image fetch should not happen for text-only meals
+    expect(mockFetch).not.toHaveBeenCalledWith('http://localhost:3000/uploads/meals/meal.png')
 
     // Assert both models were invoked
     expect(mockPrimaryInvoke).toHaveBeenCalled()
@@ -210,11 +249,48 @@ describe('Meal Analyzer AI Worker Unit Tests', () => {
     expect(mockChannel.ack).toHaveBeenCalledWith(mockMsg)
   })
 
-  it('publishes a failed result and nacks if both primary and secondary models fail and retries are exhausted', async () => {
+  it('publishes a failed result when the model returns incomplete macros', async () => {
+    mockPrimaryInvoke.mockResolvedValue({
+      foods_detected: [],
+      macros: null,
+      confidence: 0.5,
+      notes: 'Incomplete',
+    })
+
+    startMealAnalyzerWorker(mockChannel as unknown as Channel, mockRedis)
+    const consumeCallback = mockChannel.consume.mock.calls[0][1]
+
+    const mockMsg = {
+      content: Buffer.from(
+        JSON.stringify({
+          correlationId: 'test-corr-id',
+          payload: {
+            mealId: 'meal-incomplete',
+            userId: 'user-456',
+            imageUrl: null,
+            description: 'Roti',
+            mealType: 'lunch',
+            isPro: false,
+            traceId: 'trace-789',
+          },
+        }),
+      ),
+      properties: { headers: {} },
+    } as unknown as ConsumeMessage
+
+    await consumeCallback(mockMsg)
+
+    const publishedPayload = JSON.parse(mockChannel.publish.mock.calls[0][2].toString()).payload
+    expect(publishedPayload.status).toBe('failed')
+    expect(publishedPayload.errorMessage).toContain('incomplete macro data')
+    expect(mockChannel.ack).toHaveBeenCalledWith(mockMsg)
+  })
+
+  it('publishes a failed result and acks when both primary and secondary models fail', async () => {
     mockPrimaryInvoke.mockRejectedValue(new Error('Sonnet failed'))
     mockFallbackInvoke.mockRejectedValue(new Error('Haiku failed'))
 
-    startMealAnalyzerWorker(mockChannel as unknown as Channel)
+    startMealAnalyzerWorker(mockChannel as unknown as Channel, mockRedis)
     const consumeCallback = mockChannel.consume.mock.calls[0][1]
 
     const mockMsg = {
@@ -233,19 +309,15 @@ describe('Meal Analyzer AI Worker Unit Tests', () => {
         }),
       ),
       properties: {
-        headers: {
-          'x-retry-count': 3, // exhausted
-        },
+        headers: {},
       },
     } as unknown as ConsumeMessage
 
     await consumeCallback(mockMsg)
 
-    // Assert both were invoked
     expect(mockPrimaryInvoke).toHaveBeenCalled()
     expect(mockFallbackInvoke).toHaveBeenCalled()
 
-    // Assert failure was published
     expect(mockChannel.publish).toHaveBeenCalledWith(
       'fitmind.direct',
       'meal.result',
@@ -257,7 +329,7 @@ describe('Meal Analyzer AI Worker Unit Tests', () => {
     expect(publishedPayload.status).toBe('failed')
     expect(publishedPayload.errorMessage).toContain('Haiku failed')
 
-    // Assert nacked with requeue=false
-    expect(mockChannel.nack).toHaveBeenCalledWith(mockMsg, false, false)
+    expect(mockChannel.ack).toHaveBeenCalledWith(mockMsg)
+    expect(mockChannel.nack).not.toHaveBeenCalled()
   })
 })

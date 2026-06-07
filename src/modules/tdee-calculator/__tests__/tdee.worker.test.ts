@@ -120,7 +120,7 @@ describe('TDEE Calculation Worker', () => {
     expect(mockChannel.ack).toHaveBeenCalledOnce()
   })
 
-  it('nacks without requeue when retry count < 3 and both models fail', async () => {
+  it('uses formula fallback and publishes completed result when both models fail', async () => {
     mockPrimaryInvoke.mockRejectedValue(new Error('Primary failed'))
     mockFallbackInvoke.mockRejectedValue(new Error('Fallback failed'))
 
@@ -128,12 +128,16 @@ describe('TDEE Calculation Worker', () => {
     const callback = mockChannel.consume.mock.calls[0][1]
     await callback(makeMsg(mockRequest, 1))
 
-    expect(mockChannel.publish).not.toHaveBeenCalled()
-    expect(mockChannel.ack).not.toHaveBeenCalled()
-    expect(mockChannel.nack).toHaveBeenCalledWith(expect.anything(), false, false)
+    expect(mockChannel.publish).toHaveBeenCalledOnce()
+    const published = JSON.parse(mockChannel.publish.mock.calls[0][2].toString())
+    expect(published.payload.status).toBe('completed')
+    expect(published.payload.result.calories).toBeGreaterThan(0)
+    expect(published.payload.result.reasoning).toContain('Mifflin-St Jeor')
+    expect(mockChannel.ack).toHaveBeenCalledOnce()
+    expect(mockChannel.nack).not.toHaveBeenCalled()
   })
 
-  it('publishes failed result and nacks when retries are exhausted (x-retry-count >= 3)', async () => {
+  it('uses formula fallback and publishes completed result when retries are exhausted', async () => {
     mockPrimaryInvoke.mockRejectedValue(new Error('Primary failed'))
     mockFallbackInvoke.mockRejectedValue(new Error('Fallback failed'))
 
@@ -143,11 +147,11 @@ describe('TDEE Calculation Worker', () => {
 
     expect(mockChannel.publish).toHaveBeenCalledOnce()
     const published = JSON.parse(mockChannel.publish.mock.calls[0][2].toString())
-    expect(published.payload.status).toBe('failed')
-    expect(published.payload.errorMessage).toContain('Fallback failed')
+    expect(published.payload.status).toBe('completed')
+    expect(published.payload.result.calories).toBeGreaterThan(0)
 
-    expect(mockChannel.nack).toHaveBeenCalledWith(expect.anything(), false, false)
-    expect(mockChannel.ack).not.toHaveBeenCalled()
+    expect(mockChannel.ack).toHaveBeenCalledOnce()
+    expect(mockChannel.nack).not.toHaveBeenCalled()
   })
 
   it('nacks without requeue on malformed message JSON', async () => {

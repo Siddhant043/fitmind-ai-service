@@ -20,10 +20,14 @@ const QUEUES: Array<{ name: string; args?: Record<string, unknown> }> = [
   { name: 'meal.analysis.result' },
   { name: 'chat.message.request' },
   { name: 'chat.message.response' },
+  { name: 'chat.data.request' },
+  { name: 'chat.data.result' },
   { name: 'plan.analysis.trigger' },
   { name: 'plan.suggestion.result' },
   { name: 'tdee.calculation.request' },
   { name: 'tdee.calculation.result' },
+  { name: 'workout.plan.generation.request' },
+  { name: 'workout.plan.generation.result' },
   { name: 'rag-index' },
 ]
 
@@ -51,10 +55,22 @@ export const rabbitmqPlugin = fp(async (app: FastifyInstance) => {
     { queue: 'meal.analysis.result', exchange: 'fitmind.direct', routingKey: 'meal.result' },
     { queue: 'chat.message.request', exchange: 'fitmind.direct', routingKey: 'chat.request' },
     { queue: 'chat.message.response', exchange: 'fitmind.direct', routingKey: 'chat.response' },
+    { queue: 'chat.data.request', exchange: 'fitmind.direct', routingKey: 'chat.data.request' },
+    { queue: 'chat.data.result', exchange: 'fitmind.direct', routingKey: 'chat.data.result' },
     { queue: 'plan.analysis.trigger', exchange: 'fitmind.direct', routingKey: 'plan.trigger' },
     { queue: 'plan.suggestion.result', exchange: 'fitmind.direct', routingKey: 'plan.result' },
     { queue: 'tdee.calculation.request', exchange: 'fitmind.direct', routingKey: 'tdee.calculate' },
     { queue: 'tdee.calculation.result', exchange: 'fitmind.direct', routingKey: 'tdee.result' },
+    {
+      queue: 'workout.plan.generation.request',
+      exchange: 'fitmind.direct',
+      routingKey: 'workout.plan.generate',
+    },
+    {
+      queue: 'workout.plan.generation.result',
+      exchange: 'fitmind.direct',
+      routingKey: 'workout.plan.result',
+    },
   ]
 
   for (const b of bindings) {

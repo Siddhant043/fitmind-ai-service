@@ -1,13 +1,10 @@
 import { randomUUID } from 'crypto'
-import { GoogleGenerativeAIEmbeddings } from '@langchain/google-genai'
+import { buildEmbeddings } from '../../providers/embedding-provider.factory.js'
 import { getIndex } from './rag.client.js'
 import type { RagNamespace } from './rag.client.js'
 import type { Channel, ConsumeMessage } from 'amqplib'
 
-const embeddings = new GoogleGenerativeAIEmbeddings({
-  model: 'text-embedding-004',
-  apiKey: process.env.GEMINI_API_KEY,
-})
+const embeddings = buildEmbeddings()
 
 function splitText(text: string, chunkSize = 500, overlap = 100): string[] {
   const separators = ['\n\n', '\n', '. ', ' ', '']

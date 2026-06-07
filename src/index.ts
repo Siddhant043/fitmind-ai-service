@@ -6,9 +6,11 @@ import { redisPlugin } from './plugins/redis.js'
 import { startTdeeWorker } from './modules/tdee-calculator/index.js'
 import { startMealAnalyzerWorker } from './modules/meal-analyzer/index.js'
 import { startChatWorker } from './modules/chatbot/chat.worker.js'
+import { startChatDataResultConsumer } from './queues/chat-data-result.consumer.js'
 import { startRagIndexWorker } from './modules/rag/rag.indexer.js'
 import { startPlanAdvisorWorker } from './modules/plan-advisor/index.js'
 import { startPlanAdvisorCron } from './modules/plan-advisor/plan-advisor.cron.js'
+import { startWorkoutPlanGeneratorWorker } from './modules/workout-plan-generator/index.js'
 
 validateEnv()
 
@@ -44,11 +46,13 @@ server.get('/health', async () => {
 
 server.addHook('onReady', async () => {
   startTdeeWorker(server.amqp)
-  startMealAnalyzerWorker(server.amqp)
+  startMealAnalyzerWorker(server.amqp, server.redis)
   startChatWorker(server.amqp, server.redis)
+  startChatDataResultConsumer(server.amqp)
   startRagIndexWorker(server.amqp)
   startPlanAdvisorWorker(server.amqp, server.redis)
   startPlanAdvisorCron(server.amqp, server.redis)
+  startWorkoutPlanGeneratorWorker(server.amqp)
 })
 
 const port = Number(process.env.PORT ?? 3001)

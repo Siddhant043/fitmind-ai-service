@@ -15,11 +15,11 @@ Process:
 Always use the set_tdee_and_macros tool to return your answer. All values must be positive integers.`
 
 export const tdeeOutputSchema = z.object({
-  calories: z.number().int().positive(),
-  protein_g: z.number().int().positive(),
-  carbs_g: z.number().int().positive(),
-  fats_g: z.number().int().positive(),
-  fiber_g: z.number().int().positive(),
+  calories: z.number().int().min(1),
+  protein_g: z.number().int().min(1),
+  carbs_g: z.number().int().min(1),
+  fats_g: z.number().int().min(1),
+  fiber_g: z.number().int().min(1),
   reasoning: z.string().min(10).max(300),
 })
 

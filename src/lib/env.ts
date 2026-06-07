@@ -1,4 +1,8 @@
 import { z } from 'zod'
+import {
+  getEmbeddingCredentialKey,
+  resolveEmbeddingProvider,
+} from '../providers/embedding-provider.factory.js'
 
 const PROVIDER_CREDENTIAL_KEYS: Record<string, string> = {
   anthropic: 'ANTHROPIC_API_KEY',
@@ -13,6 +17,10 @@ const envSchema = z.object({
   RABBITMQ_URL: z.string().min(1),
   LLM_PRIMARY_PROVIDER: z.enum(['anthropic', 'openai', 'gemini', 'ollama']).default('anthropic'),
   LLM_FALLBACK_PROVIDER: z.enum(['anthropic', 'openai', 'gemini', 'ollama']).optional(),
+  OLLAMA_BASE_URL: z.string().url().optional(),
+  EMBEDDING_PROVIDER: z.enum(['gemini', 'openai', 'ollama']).optional(),
+  EMBEDDING_MODEL: z.string().optional(),
+  EMBEDDING_DIMENSIONS: z.coerce.number().optional(),
 })
 
 export function validateEnv(): z.infer<typeof envSchema> {
@@ -42,6 +50,15 @@ export function validateEnv(): z.infer<typeof envSchema> {
       )
       delete process.env.LLM_FALLBACK_PROVIDER
     }
+  }
+
+  const embeddingProvider = resolveEmbeddingProvider()
+  const embeddingCredKey = getEmbeddingCredentialKey(embeddingProvider)
+  if (embeddingCredKey && !process.env[embeddingCredKey]) {
+    console.error(
+      `[env] EMBEDDING_PROVIDER="${embeddingProvider}" requires ${embeddingCredKey} to be set. Exiting.`,
+    )
+    process.exit(1)
   }
 
   return env

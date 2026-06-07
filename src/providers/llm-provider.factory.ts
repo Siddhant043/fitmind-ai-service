@@ -1,6 +1,7 @@
 import { ChatAnthropic } from '@langchain/anthropic'
 import { ChatOpenAI } from '@langchain/openai'
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai'
+import { ChatOllama } from '@langchain/ollama'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 
 export type LlmTask = 'chat' | 'fast' | 'vision'
@@ -18,14 +19,14 @@ const DEFAULT_MODELS: Record<Provider, Record<LlmTask, string>> = {
     vision: 'gpt-4o',
   },
   gemini: {
-    chat: 'gemini-2.0-flash',
-    fast: 'gemini-1.5-flash',
-    vision: 'gemini-2.0-flash',
+    chat: 'gemini-2.5-flash',
+    fast: 'gemini-2.5-flash',
+    vision: 'gemini-2.5-flash',
   },
   ollama: {
-    chat: 'llama3.2',
-    fast: 'llama3.2',
-    vision: 'llava',
+    chat: 'qwen3.5',
+    fast: 'qwen3.5',
+    vision: 'qwen3.5',
   },
 }
 
@@ -61,7 +62,22 @@ function buildOpenAIModel(task: LlmTask, isFallback: boolean): BaseChatModel {
 function buildGeminiModel(task: LlmTask, isFallback: boolean): BaseChatModel {
   const model = resolveModelName('gemini', task, isFallback)
   const apiKey = process.env[isFallback ? 'LLM_FALLBACK_GEMINI_API_KEY' : 'GEMINI_API_KEY']
-  return new ChatGoogleGenerativeAI({ model, apiKey }) as unknown as BaseChatModel
+  return new ChatGoogleGenerativeAI({
+    model,
+    apiKey,
+    maxRetries: 0,
+  }) as unknown as BaseChatModel
+}
+
+function buildOllamaModel(task: LlmTask, isFallback: boolean): BaseChatModel {
+  const model = resolveModelName('ollama', task, isFallback)
+  const baseUrl = process.env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434'
+  return new ChatOllama({
+    model,
+    baseUrl,
+    temperature: 0.3,
+    think: false,
+  }) as unknown as BaseChatModel
 }
 
 function buildProviderModel(provider: Provider, task: LlmTask, isFallback: boolean): BaseChatModel {
@@ -73,12 +89,19 @@ function buildProviderModel(provider: Provider, task: LlmTask, isFallback: boole
     case 'gemini':
       return buildGeminiModel(task, isFallback)
     case 'ollama':
-      throw new Error(
-        'Ollama provider requires @langchain/ollama. Install it and add a buildOllamaModel implementation.',
-      )
+      return buildOllamaModel(task, isFallback)
     default:
       throw new Error(`Unknown LLM provider: ${provider as string}`)
   }
+}
+
+export function resolveStructuredOutputMethod(
+  provider: Provider = (process.env.LLM_PRIMARY_PROVIDER ?? 'anthropic') as Provider,
+): 'functionCalling' | 'jsonSchema' {
+  // ChatOllama's jsonSchema path returns empty responses for qwen3.5 meal analysis;
+  // functionCalling uses the generic LangChain path and works reliably with Ollama.
+  void provider
+  return 'functionCalling'
 }
 
 export function buildPrimaryModel(task: LlmTask): BaseChatModel {
@@ -94,4 +117,24 @@ export function buildFallbackModel(task: LlmTask): BaseChatModel | null {
   } catch {
     return null
   }
+}
+
+const GEMINI_VISION_ALTERNATE_MODELS = ['gemini-2.5-flash', 'gemini-3.1-pro'] as const
+
+/** When primary Gemini model is overloaded, try another Gemini vision model before failing. */
+export function buildAlternatePrimaryModel(task: LlmTask): BaseChatModel | null {
+  const provider = (process.env.LLM_PRIMARY_PROVIDER ?? 'anthropic') as Provider
+  if (provider !== 'gemini' || !process.env.GEMINI_API_KEY) return null
+
+  const primaryModelName = resolveModelName('gemini', task, false)
+  const alternateModelName = GEMINI_VISION_ALTERNATE_MODELS.find(
+    (modelName) => modelName !== primaryModelName,
+  )
+  if (!alternateModelName) return null
+
+  return new ChatGoogleGenerativeAI({
+    model: alternateModelName,
+    apiKey: process.env.GEMINI_API_KEY,
+    maxRetries: 0,
+  }) as unknown as BaseChatModel
 }

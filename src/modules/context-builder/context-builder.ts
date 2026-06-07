@@ -8,6 +8,43 @@ export interface MacroTargets {
   fiber_g: number
 }
 
+export interface WorkingSetSnapshot {
+  setNumber: number
+  reps: number
+  weightKg: number
+  rpe: number | null
+}
+
+export interface WorkoutExerciseDetail {
+  exerciseId: string
+  name: string
+  muscleGroups: string[]
+  workingSets: WorkingSetSnapshot[]
+  workingVolumeKg: number
+  performanceFlags: string[]
+  vsPrevious: { volumeDeltaPct: number; maxWeightDeltaKg: number } | null
+  vsPlan: { plannedSets: number; plannedRepRange: string; hitTarget: boolean } | null
+}
+
+export interface LastWorkoutDetail {
+  sessionId: string
+  date: string
+  durationMin: number | null
+  planDayLabel: string | null
+  totalVolumeKg: number | null
+  exercises: WorkoutExerciseDetail[]
+}
+
+export interface MealDetailSnapshot {
+  mealId: string
+  loggedAt: string
+  mealType: string
+  description: string | null
+  macros: { calories: number; proteinG: number; carbsG: number; fatsG: number }
+  mealFeedback: string | null
+  vsDailyTarget: { proteinPct: number; caloriesPct: number } | null
+}
+
 export interface UserContextBundle {
   userId: string
   updatedAt: string
@@ -41,10 +78,20 @@ export interface UserContextBundle {
     fatsG: number
     mealsLogged: number
   } | null
+  recentNutrition?: Array<{
+    date: string
+    calories: number
+    proteinG: number
+    carbsG: number
+    fatsG: number
+  }>
   stats: {
     totalWorkouts: number
     currentStreakDays: number
   }
+  lastWorkoutDetail?: LastWorkoutDetail | null
+  lastMealDetail?: MealDetailSnapshot | null
+  recentMeals?: MealDetailSnapshot[]
 }
 
 export async function buildUserContext(
@@ -85,6 +132,28 @@ export function formatContextForPrompt(ctx: UserContextBundle): string {
       ? `Today's nutrition: ${ctx.todayNutrition.calories} kcal, P${ctx.todayNutrition.proteinG}g (${ctx.todayNutrition.mealsLogged} meals logged)`
       : 'No meals logged today',
   ]
+
+  if (ctx.lastWorkoutDetail) {
+    const workout = ctx.lastWorkoutDetail
+    const exerciseSummary = workout.exercises
+      .slice(0, 5)
+      .map((exercise) => {
+        const flags =
+          exercise.performanceFlags.length > 0 ? ` [${exercise.performanceFlags.join(', ')}]` : ''
+        return `${exercise.name}: ${exercise.workingSets.length} working sets, ${exercise.workingVolumeKg}kg volume${flags}`
+      })
+      .join('; ')
+    lines.push(
+      `Last workout (${workout.date}${workout.planDayLabel ? `, ${workout.planDayLabel}` : ''}): ${exerciseSummary || 'no exercises logged'}`,
+    )
+  }
+
+  if (ctx.lastMealDetail) {
+    const meal = ctx.lastMealDetail
+    lines.push(
+      `Last meal (${meal.mealType}, ${meal.loggedAt.slice(0, 10)}): ${meal.macros.calories} kcal, P${meal.macros.proteinG}g${meal.description ? ` — ${meal.description}` : ''}`,
+    )
+  }
 
   return lines.filter(Boolean).join('\n')
 }
