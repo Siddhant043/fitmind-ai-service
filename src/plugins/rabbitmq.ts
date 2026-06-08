@@ -28,6 +28,8 @@ const QUEUES: Array<{ name: string; args?: Record<string, unknown> }> = [
   { name: 'tdee.calculation.result' },
   { name: 'workout.plan.generation.request' },
   { name: 'workout.plan.generation.result' },
+  { name: 'weekly.recap.request' },
+  { name: 'weekly.recap.result' },
   { name: 'rag-index' },
 ]
 
@@ -71,6 +73,8 @@ export const rabbitmqPlugin = fp(async (app: FastifyInstance) => {
       exchange: 'fitmind.direct',
       routingKey: 'workout.plan.result',
     },
+    { queue: 'weekly.recap.request', exchange: 'fitmind.direct', routingKey: 'recap.request' },
+    { queue: 'weekly.recap.result', exchange: 'fitmind.direct', routingKey: 'recap.result' },
   ]
 
   for (const b of bindings) {

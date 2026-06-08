@@ -61,7 +61,10 @@ const dayExtractionSchema = z.object({
 type StructuredExtractionModel = {
   withStructuredOutput: (
     schema: z.ZodTypeAny,
-    config?: { name?: string },
+    config?: {
+      name?: string
+      method?: 'functionCalling' | 'jsonMode' | 'jsonSchema'
+    },
   ) => { invoke: (messages: unknown[]) => Promise<unknown> }
 }
 

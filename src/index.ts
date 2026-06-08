@@ -11,6 +11,7 @@ import { startRagIndexWorker } from './modules/rag/rag.indexer.js'
 import { startPlanAdvisorWorker } from './modules/plan-advisor/index.js'
 import { startPlanAdvisorCron } from './modules/plan-advisor/plan-advisor.cron.js'
 import { startWorkoutPlanGeneratorWorker } from './modules/workout-plan-generator/index.js'
+import { startWeeklyRecapWorker } from './modules/weekly-recap/index.js'
 
 validateEnv()
 
@@ -53,6 +54,7 @@ server.addHook('onReady', async () => {
   startPlanAdvisorWorker(server.amqp, server.redis)
   startPlanAdvisorCron(server.amqp, server.redis)
   startWorkoutPlanGeneratorWorker(server.amqp)
+  startWeeklyRecapWorker(server.amqp)
 })
 
 const port = Number(process.env.PORT ?? 3001)
