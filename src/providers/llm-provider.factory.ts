@@ -119,7 +119,7 @@ export function buildFallbackModel(task: LlmTask): BaseChatModel | null {
   }
 }
 
-const GEMINI_VISION_ALTERNATE_MODELS = ['gemini-2.5-flash', 'gemini-3.1-pro'] as const
+const GEMINI_VISION_ALTERNATE_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash'] as const
 
 /** When primary Gemini model is overloaded, try another Gemini vision model before failing. */
 export function buildAlternatePrimaryModel(task: LlmTask): BaseChatModel | null {

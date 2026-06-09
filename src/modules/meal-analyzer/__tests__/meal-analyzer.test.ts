@@ -1,6 +1,7 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
 import type { Channel, ConsumeMessage } from 'amqplib'
 import { startMealAnalyzerWorker } from '../meal-analyzer.worker.js'
+import { mealAnalyzerOutputSchema } from '../meal-analyzer.prompt.js'
 
 const mockPrimaryInvoke = vi.fn()
 const mockFallbackInvoke = vi.fn()
@@ -331,5 +332,25 @@ describe('Meal Analyzer AI Worker Unit Tests', () => {
 
     expect(mockChannel.ack).toHaveBeenCalledWith(mockMsg)
     expect(mockChannel.nack).not.toHaveBeenCalled()
+  })
+})
+
+describe('mealAnalyzerOutputSchema', () => {
+  it('accepts workoutSuggestion with surplusCalories', () => {
+    const parsed = mealAnalyzerOutputSchema.parse({
+      foods_detected: [],
+      macros: { calories: 1200, proteinG: 40, carbsG: 150, fatsG: 30, fiberG: 5 },
+      confidence: 0.8,
+      notes: 'High calorie meal',
+      mealFeedback: 'Well above your per-meal share.',
+      workoutSuggestion: {
+        exerciseName: 'Cycling',
+        durationMinutes: 45,
+        estimatedCalsBurned: 300,
+        surplusCalories: 600,
+        rationale: 'Offsets part of the 600 kcal surplus.',
+      },
+    })
+    expect(parsed.workoutSuggestion?.surplusCalories).toBe(600)
   })
 })

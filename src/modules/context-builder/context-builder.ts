@@ -89,6 +89,14 @@ export interface UserContextBundle {
     totalWorkouts: number
     currentStreakDays: number
   }
+  gamification?: {
+    recentMilestones: Array<{
+      type: string
+      title: string
+      body: string | null
+      earnedAt: string
+    }>
+  }
   lastWorkoutDetail?: LastWorkoutDetail | null
   lastMealDetail?: MealDetailSnapshot | null
   recentMeals?: MealDetailSnapshot[]
@@ -152,6 +160,16 @@ export function formatContextForPrompt(ctx: UserContextBundle): string {
     const meal = ctx.lastMealDetail
     lines.push(
       `Last meal (${meal.mealType}, ${meal.loggedAt.slice(0, 10)}): ${meal.macros.calories} kcal, P${meal.macros.proteinG}g${meal.description ? ` — ${meal.description}` : ''}`,
+    )
+  }
+
+  const milestones = ctx.gamification?.recentMilestones ?? []
+  if (milestones.length > 0) {
+    const achievements = milestones
+      .map((m) => `${m.title}${m.body ? ` — ${m.body}` : ''} (${m.earnedAt.slice(0, 10)})`)
+      .join('; ')
+    lines.push(
+      `Recent achievements: ${achievements}. Acknowledge briefly and naturally only if relevant — don't force it.`,
     )
   }
 

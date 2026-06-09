@@ -178,4 +178,29 @@ describe('formatContextForPrompt', () => {
     expect(text).toContain('Last meal')
     expect(text).toContain('Paneer curry')
   })
+
+  it('includes recent achievements when gamification milestones are present', () => {
+    const text = formatContextForPrompt(
+      makeBundle({
+        gamification: {
+          recentMilestones: [
+            {
+              type: 'strength',
+              title: 'New Personal Record',
+              body: 'Bench Press — 80 kg × 5 (+5 kg since last time)',
+              earnedAt: '2026-06-08T18:00:00.000Z',
+            },
+          ],
+        },
+      }),
+    )
+    expect(text).toContain('Recent achievements:')
+    expect(text).toContain('New Personal Record')
+    expect(text).toContain('Bench Press — 80 kg × 5')
+  })
+
+  it('omits recent achievements line when there are no milestones', () => {
+    const text = formatContextForPrompt(makeBundle())
+    expect(text).not.toContain('Recent achievements:')
+  })
 })

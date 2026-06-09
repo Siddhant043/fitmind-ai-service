@@ -2,6 +2,7 @@ export interface MealAnalysisWorkoutSuggestion {
   exerciseName: string
   durationMinutes: number
   estimatedCalsBurned: number
+  surplusCalories: number
   rationale: string
 }
 

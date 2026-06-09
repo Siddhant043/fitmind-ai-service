@@ -129,15 +129,23 @@ function buildCandidate(raw: unknown): MealAnalyzerOutput | null {
     const exerciseName = typeof workout.exerciseName === 'string' ? workout.exerciseName : null
     const durationMinutes = toNonNegativeInt(workout.durationMinutes)
     const estimatedCalsBurned = toNonNegativeInt(workout.estimatedCalsBurned)
+    const surplusCalories = toNonNegativeInt(workout.surplusCalories)
     const rationale = typeof workout.rationale === 'string' ? workout.rationale : null
     if (
       exerciseName &&
       durationMinutes != null &&
       durationMinutes > 0 &&
       estimatedCalsBurned != null &&
+      surplusCalories != null &&
       rationale
     ) {
-      workoutSuggestion = { exerciseName, durationMinutes, estimatedCalsBurned, rationale }
+      workoutSuggestion = {
+        exerciseName,
+        durationMinutes,
+        estimatedCalsBurned,
+        surplusCalories,
+        rationale,
+      }
     }
   }
 

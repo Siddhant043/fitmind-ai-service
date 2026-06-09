@@ -123,6 +123,7 @@ async function resolveMealAnalysisResult(
 
   for (let modelIndex = 0; modelIndex < models.length; modelIndex++) {
     const model = models[modelIndex]
+    if (!model) continue
     const label = modelLabels[modelIndex] ?? `model-${modelIndex}`
 
     try {
