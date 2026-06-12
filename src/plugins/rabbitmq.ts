@@ -30,6 +30,10 @@ const QUEUES: Array<{ name: string; args?: Record<string, unknown> }> = [
   { name: 'workout.plan.generation.result' },
   { name: 'weekly.recap.request' },
   { name: 'weekly.recap.result' },
+  { name: 'chapter.celebration.request' },
+  { name: 'chapter.celebration.result' },
+  { name: 'challenge.suggestion.request' },
+  { name: 'challenge.suggestion.result' },
   { name: 'rag-index' },
 ]
 
@@ -75,6 +79,26 @@ export const rabbitmqPlugin = fp(async (app: FastifyInstance) => {
     },
     { queue: 'weekly.recap.request', exchange: 'fitmind.direct', routingKey: 'recap.request' },
     { queue: 'weekly.recap.result', exchange: 'fitmind.direct', routingKey: 'recap.result' },
+    {
+      queue: 'chapter.celebration.request',
+      exchange: 'fitmind.direct',
+      routingKey: 'chapter.celebration.request',
+    },
+    {
+      queue: 'chapter.celebration.result',
+      exchange: 'fitmind.direct',
+      routingKey: 'chapter.celebration.result',
+    },
+    {
+      queue: 'challenge.suggestion.request',
+      exchange: 'fitmind.direct',
+      routingKey: 'challenge.suggestion.request',
+    },
+    {
+      queue: 'challenge.suggestion.result',
+      exchange: 'fitmind.direct',
+      routingKey: 'challenge.suggestion.result',
+    },
   ]
 
   for (const b of bindings) {

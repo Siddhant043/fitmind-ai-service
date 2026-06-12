@@ -115,7 +115,11 @@ function publishError(
 
 function userFacingChatError(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err)
-  if (/429|quota|rate.?limit|too many requests/i.test(message)) {
+  if (
+    /429|503|quota|rate.?limit|too many requests|high demand|Service Unavailable|overloaded/i.test(
+      message,
+    )
+  ) {
     return 'The AI service is temporarily busy. Please try again in a minute.'
   }
   return message
@@ -166,10 +170,45 @@ export function startChatWorker(channel: Channel, redis: Redis) {
       const graphContent = assistantContentFromGraphResult(result)
       const assistantContent = streamedContent.trim() || graphContent.trim()
       const actionPayload = result.workoutAction ?? null
+      // #region agent log
+      fetch('http://127.0.0.1:7886/ingest/aac2f9ab-90d4-403d-9fe4-3681212abd5b', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7c35e8' },
+        body: JSON.stringify({
+          sessionId: '7c35e8',
+          location: 'chat.worker.ts:publishDone',
+          message: 'chat done with action',
+          data: {
+            sessionId,
+            userId,
+            contentLen: assistantContent.length,
+            actionType: actionPayload?.type ?? null,
+            actionDayCount:
+              actionPayload?.type === 'workout_plan_create' ? actionPayload.data.days.length : null,
+          },
+          timestamp: Date.now(),
+          hypothesisId: 'B,C',
+        }),
+      }).catch(() => {})
+      // #endregion
       publishDone(channel, userId, sessionId, correlationId, assistantContent, actionPayload)
       channel.ack(msg)
     } catch (err) {
       const errorMessage = userFacingChatError(err)
+      // #region agent log
+      fetch('http://127.0.0.1:7886/ingest/aac2f9ab-90d4-403d-9fe4-3681212abd5b', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7c35e8' },
+        body: JSON.stringify({
+          sessionId: '7c35e8',
+          location: 'chat.worker.ts:catch',
+          message: 'chat worker error',
+          data: { sessionId, error: errorMessage },
+          timestamp: Date.now(),
+          hypothesisId: 'E',
+        }),
+      }).catch(() => {})
+      // #endregion
       publishError(channel, userId, sessionId, errorMessage, correlationId)
       const retryCount = (msg.properties.headers?.['x-retry-count'] ?? 0) as number
       if (retryCount < 3) {

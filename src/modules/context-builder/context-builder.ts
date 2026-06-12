@@ -96,6 +96,20 @@ export interface UserContextBundle {
       body: string | null
       earnedAt: string
     }>
+    journey?: {
+      arcName: string
+      chapterTitle: string
+      chapterIndex: number
+      chapterCount: number
+      progressPct: number
+    } | null
+    activeChallenge?: {
+      id: string
+      title: string
+      description: string
+      endsAt: string
+      progressPct: number
+    } | null
   }
   lastWorkoutDetail?: LastWorkoutDetail | null
   lastMealDetail?: MealDetailSnapshot | null
@@ -170,6 +184,20 @@ export function formatContextForPrompt(ctx: UserContextBundle): string {
       .join('; ')
     lines.push(
       `Recent achievements: ${achievements}. Acknowledge briefly and naturally only if relevant — don't force it.`,
+    )
+  }
+
+  const journey = ctx.gamification?.journey
+  if (journey) {
+    lines.push(
+      `Journey: Chapter ${journey.chapterIndex + 1}/${journey.chapterCount} — ${journey.chapterTitle} (${journey.progressPct}% complete) in arc "${journey.arcName}".`,
+    )
+  }
+
+  const activeChallenge = ctx.gamification?.activeChallenge
+  if (activeChallenge) {
+    lines.push(
+      `Active challenge: "${activeChallenge.title}" (${activeChallenge.progressPct}% complete, ends ${activeChallenge.endsAt.slice(0, 10)}).`,
     )
   }
 

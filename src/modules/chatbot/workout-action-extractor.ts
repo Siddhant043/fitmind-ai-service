@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { HumanMessage, SystemMessage } from '@langchain/core/messages'
 import { resolveStructuredOutputMethod } from '../../providers/llm-provider.factory.js'
+import type { ChallengeSuggestAction } from '../challenge-suggester/challenge-suggester.types.js'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -41,6 +42,7 @@ export type ChatPlanDay = z.infer<typeof chatPlanDaySchema>
 export type WorkoutActionPayload =
   | z.infer<typeof workoutPlanCreatePayloadSchema>
   | z.infer<typeof workoutDayCreatePayloadSchema>
+  | ChallengeSuggestAction
 
 const planExtractionSchema = z.object({
   isPlanPresent: z.boolean(),
@@ -105,6 +107,28 @@ export async function extractWorkoutPlanAction(
   ])
 
   const parsed = planExtractionSchema.safeParse(result)
+  // #region agent log
+  fetch('http://127.0.0.1:7886/ingest/aac2f9ab-90d4-403d-9fe4-3681212abd5b', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7c35e8' },
+    body: JSON.stringify({
+      sessionId: '7c35e8',
+      location: 'workout-action-extractor.ts:extractWorkoutPlanAction',
+      message: 'plan extraction result',
+      data: {
+        parseOk: parsed.success,
+        isPlanPresent: parsed.success ? parsed.data.isPlanPresent : false,
+        parseErrors: parsed.success ? [] : parsed.error.issues.map((i) => i.message),
+        name: parsed.success ? parsed.data.name : null,
+        daysPerWeek: parsed.success ? parsed.data.daysPerWeek : null,
+        dayCount: parsed.success ? (parsed.data.days?.length ?? 0) : 0,
+        responseLen: responseText.length,
+      },
+      timestamp: Date.now(),
+      hypothesisId: 'B',
+    }),
+  }).catch(() => {})
+  // #endregion
   if (!parsed.success || !parsed.data.isPlanPresent) return null
 
   const { name, goal, difficulty, daysPerWeek, description, days } = parsed.data

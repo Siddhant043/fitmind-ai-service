@@ -203,4 +203,23 @@ describe('formatContextForPrompt', () => {
     const text = formatContextForPrompt(makeBundle())
     expect(text).not.toContain('Recent achievements:')
   })
+
+  it('includes journey chapter when gamification journey is present', () => {
+    const text = formatContextForPrompt(
+      makeBundle({
+        gamification: {
+          recentMilestones: [],
+          journey: {
+            arcName: 'The Reveal',
+            chapterTitle: 'Protein Consistency',
+            chapterIndex: 1,
+            chapterCount: 5,
+            progressPct: 78,
+          },
+        },
+      }),
+    )
+    expect(text).toContain('Journey: Chapter 2/5 — Protein Consistency (78% complete)')
+    expect(text).toContain('The Reveal')
+  })
 })

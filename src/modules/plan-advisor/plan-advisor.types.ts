@@ -1,6 +1,12 @@
 import { z } from 'zod'
 
-export const suggestionTypeSchema = z.enum(['nutrition', 'workout', 'recovery', 'goal'])
+export const suggestionTypeSchema = z.enum([
+  'nutrition',
+  'workout',
+  'recovery',
+  'goal',
+  'challenge',
+])
 export type SuggestionType = z.infer<typeof suggestionTypeSchema>
 
 export const deltaMetricsSchema = z.object({

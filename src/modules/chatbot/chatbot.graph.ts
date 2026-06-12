@@ -15,6 +15,7 @@ import {
   extractWorkoutDayAction,
   type WorkoutActionPayload,
 } from './workout-action-extractor.js'
+import { extractChallengeAction } from './challenge-action-extractor.js'
 import { buildChatTools } from './tools/index.js'
 
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -45,6 +46,7 @@ interface ChatConfigurable {
 
 const HISTORY_INTENTS = new Set(['workout_history', 'meal_history', 'progress_review'])
 const PLAN_CREATE_INTENTS = new Set(['workout_plan_create', 'workout_day_create'])
+const CHALLENGE_INTENTS = new Set(['challenge_suggest'])
 
 // ─── System prompt ────────────────────────────────────────────────────────────
 
@@ -153,6 +155,7 @@ async function classifyIntent(state: ChatStateType): Promise<Partial<ChatStateTy
 - workout_history: user asks about THEIR OWN past/recent/last workout, exercise performance, weak lifts, or session review
 - meal_history: user asks about THEIR OWN logged meals, last meal, or how to improve a meal they ate
 - progress_review: user asks why they are not progressing, getting stronger, or how they are doing overall
+- challenge_suggest: user asks for a challenge, micro-challenge, weekly goal, or 7-day contract to opt into
 - general: everything else
 
 Reply with only the intent name.`,
@@ -169,8 +172,23 @@ Reply with only the intent name.`,
     'workout_history',
     'meal_history',
     'progress_review',
+    'challenge_suggest',
   ] as const
   const intent = knownIntents.includes(raw as (typeof knownIntents)[number]) ? raw : 'general'
+  // #region agent log
+  fetch('http://127.0.0.1:7886/ingest/aac2f9ab-90d4-403d-9fe4-3681212abd5b', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7c35e8' },
+    body: JSON.stringify({
+      sessionId: '7c35e8',
+      location: 'chatbot.graph.ts:classifyIntent',
+      message: 'intent classified',
+      data: { raw, intent, textPreview: text.slice(0, 120) },
+      timestamp: Date.now(),
+      hypothesisId: 'A',
+    }),
+  }).catch(() => {})
+  // #endregion
   return { intent }
 }
 
@@ -330,6 +348,10 @@ async function extractWorkoutStructure(state: ChatStateType): Promise<Partial<Ch
     const action = await extractWorkoutDayAction(lastAI, model)
     return { workoutAction: action }
   }
+  if (state.intent === 'challenge_suggest') {
+    const action = await extractChallengeAction(lastAI, model)
+    return { workoutAction: action }
+  }
   return { workoutAction: null }
 }
 
@@ -369,6 +391,7 @@ const graph = new StateGraph(ChatState)
     if (state.intent === 'fitness_rag') return 'retrieve_fitness_rag'
     if (state.intent === 'nutrition_rag') return 'retrieve_nutrition_rag'
     if (PLAN_CREATE_INTENTS.has(state.intent)) return 'generate_response'
+    if (CHALLENGE_INTENTS.has(state.intent)) return 'generate_response'
     if (state.intent === 'general') return 'generate_response'
     if (HISTORY_INTENTS.has(state.intent) && hasHistoryContextForIntent(state)) {
       return 'generate_history_response'
@@ -386,7 +409,7 @@ const graph = new StateGraph(ChatState)
   .addEdge('generate_history_response', END)
   .addEdge('stream_final_response', END)
   .addConditionalEdges('generate_response', (state) => {
-    if (PLAN_CREATE_INTENTS.has(state.intent)) {
+    if (PLAN_CREATE_INTENTS.has(state.intent) || CHALLENGE_INTENTS.has(state.intent)) {
       return 'extract_workout_structure'
     }
     return END

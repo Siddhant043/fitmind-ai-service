@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import type { BaseMessage } from '@langchain/core/messages'
-import { invokeWithFallback } from '../llm-with-fallback.js'
+import { invokeWithFallback, isTransientLlmError } from '../llm-with-fallback.js'
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -78,5 +78,37 @@ describe('invokeWithFallback', () => {
     await invokeWithFallback(primary, fallback, msgs)
 
     expect(fallback.invoke).toHaveBeenCalledWith(msgs)
+  })
+
+  it('retries primary on transient 503 before falling back', async () => {
+    vi.useFakeTimers()
+    let primaryAttempts = 0
+    const primary = mockModel(async () => {
+      primaryAttempts += 1
+      if (primaryAttempts < 2) {
+        throw new Error('[503 Service Unavailable] high demand')
+      }
+      return PRIMARY_RESULT
+    })
+    const fallback = mockModel(async () => FALLBACK_RESULT)
+
+    const resultPromise = invokeWithFallback(primary, fallback, MESSAGES)
+    await vi.runAllTimersAsync()
+    const result = await resultPromise
+
+    expect(result).toBe(PRIMARY_RESULT)
+    expect(primaryAttempts).toBe(2)
+    expect(fallback.invoke).not.toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+})
+
+describe('isTransientLlmError', () => {
+  it('detects Gemini overload errors', () => {
+    expect(
+      isTransientLlmError(
+        new Error('[503 Service Unavailable] This model is currently experiencing high demand.'),
+      ),
+    ).toBe(true)
   })
 })
