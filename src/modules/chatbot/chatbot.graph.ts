@@ -175,20 +175,6 @@ Reply with only the intent name.`,
     'challenge_suggest',
   ] as const
   const intent = knownIntents.includes(raw as (typeof knownIntents)[number]) ? raw : 'general'
-  // #region agent log
-  fetch('http://127.0.0.1:7886/ingest/aac2f9ab-90d4-403d-9fe4-3681212abd5b', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7c35e8' },
-    body: JSON.stringify({
-      sessionId: '7c35e8',
-      location: 'chatbot.graph.ts:classifyIntent',
-      message: 'intent classified',
-      data: { raw, intent, textPreview: text.slice(0, 120) },
-      timestamp: Date.now(),
-      hypothesisId: 'A',
-    }),
-  }).catch(() => {})
-  // #endregion
   return { intent }
 }
 

@@ -1,12 +1,11 @@
 import { describe, it, expect, vi } from 'vitest'
-import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import type { BaseMessage } from '@langchain/core/messages'
-import { invokeWithFallback, isTransientLlmError } from '../llm-with-fallback.js'
+import { invokeWithFallback, isTransientLlmError, type InvokableLlm } from '../llm-with-fallback.js'
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function mockModel(invokeImpl: () => Promise<unknown>): BaseChatModel {
-  return { invoke: vi.fn().mockImplementation(invokeImpl) } as unknown as BaseChatModel
+function mockModel(invokeImpl: () => Promise<unknown>): InvokableLlm {
+  return { invoke: vi.fn().mockImplementation(invokeImpl) }
 }
 
 const MESSAGES = [] as BaseMessage[]

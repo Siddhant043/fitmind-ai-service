@@ -1,8 +1,23 @@
-import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import type { BaseMessage } from '@langchain/core/messages'
 import type { AIMessageChunk } from '@langchain/core/messages'
 
 const TRANSIENT_LLM_MAX_ATTEMPTS = 3
+
+/**
+ * Structural chat-model surface used by fallback helpers.
+ * Accepts both BaseChatModel and tool-bound Runnables from `bindTools()`.
+ */
+export type InvokableLlm = {
+  invoke: (messages: BaseMessage[]) => Promise<unknown>
+}
+
+export type StreamableLlm = {
+  stream: (
+    messages: BaseMessage[],
+  ) =>
+    | AsyncIterable<AIMessageChunk | { content?: unknown }>
+    | Promise<AsyncIterable<AIMessageChunk | { content?: unknown }>>
+}
 
 export function isTransientLlmError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err)
@@ -16,7 +31,7 @@ async function delay(ms: number): Promise<void> {
 }
 
 async function invokeWithTransientRetries(
-  model: BaseChatModel,
+  model: InvokableLlm,
   messages: BaseMessage[],
   label: string,
 ): Promise<unknown> {
@@ -43,8 +58,8 @@ async function invokeWithTransientRetries(
 }
 
 export async function invokeWithFallback(
-  primary: BaseChatModel,
-  fallback: BaseChatModel | null,
+  primary: InvokableLlm,
+  fallback: InvokableLlm | null,
   messages: BaseMessage[],
 ): Promise<unknown> {
   try {
@@ -57,12 +72,12 @@ export async function invokeWithFallback(
 }
 
 export async function streamWithFallback(
-  primary: BaseChatModel,
-  fallback: BaseChatModel | null,
+  primary: StreamableLlm,
+  fallback: StreamableLlm | null,
   messages: BaseMessage[],
   onToken: (token: string) => void,
 ): Promise<string> {
-  const streamFromModel = async (model: BaseChatModel, _label: string): Promise<string> => {
+  const streamFromModel = async (model: StreamableLlm, _label: string): Promise<string> => {
     let fullContent = ''
     const stream = await model.stream(messages)
     for await (const chunk of stream) {
@@ -76,7 +91,7 @@ export async function streamWithFallback(
   }
 
   const streamWithTransientRetries = async (
-    model: BaseChatModel,
+    model: StreamableLlm,
     label: string,
   ): Promise<string> => {
     let lastErr: unknown
