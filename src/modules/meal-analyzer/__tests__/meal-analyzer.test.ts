@@ -42,6 +42,8 @@ describe('Meal Analyzer AI Worker Unit Tests', () => {
             goal: 'cut',
             tdee: 2200,
             macroTargets: { calories: 2000, protein_g: 150, carbs_g: 200, fats_g: 65 },
+            countryCode: 'IN',
+            dietaryPref: 'vegetarian',
           },
           todayNutrition: { calories: 800, proteinG: 40 },
           activePlan: { name: 'PPL' },
@@ -144,8 +146,12 @@ describe('Meal Analyzer AI Worker Unit Tests', () => {
       expect.any(Object),
     )
 
-    // Assert primary model was called
+    // Assert primary model was called with country-aware system prompt
     expect(mockPrimaryInvoke).toHaveBeenCalled()
+    const invokeArgs = mockPrimaryInvoke.mock.calls[0][0] as Array<{ content: string }>
+    const systemMessage = invokeArgs[0]
+    expect(systemMessage.content).toContain('Country: India (IN)')
+    expect(systemMessage.content).toContain('Dietary preference: vegetarian')
     expect(mockFallbackInvoke).not.toHaveBeenCalled()
 
     // Assert outcome was published

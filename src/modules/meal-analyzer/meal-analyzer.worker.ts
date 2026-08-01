@@ -38,6 +38,8 @@ interface RedisUserContext {
       carbs_g: number
       fats_g: number
     } | null
+    countryCode?: string | null
+    dietaryPref?: string | null
   }
   activePlan?: {
     name?: string
@@ -107,6 +109,8 @@ function parseUserContextForMealAnalysis(raw: string | null): MealAnalyzerUserCo
       todayCalories: ctx.todayNutrition?.calories ?? 0,
       todayProteinG: ctx.todayNutrition?.proteinG ?? 0,
       activePlanName: ctx.activePlan?.name ?? null,
+      countryCode: ctx.profile?.countryCode ?? null,
+      dietaryPref: ctx.profile?.dietaryPref ?? null,
     }
   } catch {
     return null

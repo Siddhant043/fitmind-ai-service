@@ -57,6 +57,7 @@ export interface UserContextBundle {
     goal: string | null
     activityLevel: string | null
     dietaryPref: string | null
+    countryCode: string | null
     tdee: number | null
     macroTargets: MacroTargets | null
     subscriptionTier: 'free' | 'pro'
