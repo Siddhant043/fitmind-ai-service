@@ -44,8 +44,9 @@ vi.mock('../../../providers/llm-provider.factory.js', () => ({
   buildFallbackModel: vi.fn().mockReturnValue(null),
 }))
 
-import { retrieveWithRerank } from '../rag.retriever.js'
+import { retrieveWithRerank, retrieveMultiHopWithRerank } from '../rag.retriever.js'
 import { getIndex } from '../rag.client.js'
+import { buildPrimaryModel } from '../../../providers/llm-provider.factory.js'
 
 const SAVED_ENV = { ...process.env }
 
@@ -157,5 +158,73 @@ describe('retrieveWithRerank — cache miss', () => {
     const result = await retrieveWithRerank('obscure query', 'fitness-knowledge', redis)
     expect(result).toEqual([])
     expect(mockRerank).not.toHaveBeenCalled()
+  })
+})
+
+describe('retrieveMultiHopWithRerank', () => {
+  function mockPrimaryModelForDecomposition(subQueryLines: string) {
+    const invoke = vi.fn().mockImplementation((messages: Array<{ content: string }>) => {
+      const systemPrompt = messages[0]?.content ?? ''
+      if (systemPrompt.includes('Break the following')) {
+        return Promise.resolve({ content: subQueryLines })
+      }
+      return Promise.resolve({ content: 'hypothetical document answer' })
+    })
+    vi.mocked(buildPrimaryModel).mockReturnValue({ invoke } as never)
+  }
+
+  it('decomposes the query and retrieves once per sub-question', async () => {
+    mockPrimaryModelForDecomposition('periodization for strength\nperiodization for hypertrophy')
+    const redis = buildMockRedis()
+
+    await retrieveMultiHopWithRerank(
+      'Compare periodization for strength vs hypertrophy',
+      'fitness-knowledge',
+      redis,
+    )
+
+    // 2 sub-queries, each doing its own cache lookup
+    expect(redis.get).toHaveBeenCalledTimes(2)
+  })
+
+  it('merges and caps results to RERANK_TOP_N total', async () => {
+    mockPrimaryModelForDecomposition('sub-question one\nsub-question two\nsub-question three')
+    const redis = buildMockRedis()
+    mockRerank
+      .mockResolvedValueOnce({
+        results: [
+          { index: 0, relevanceScore: 0.9 },
+          { index: 1, relevanceScore: 0.8 },
+        ],
+      })
+      .mockResolvedValueOnce({
+        results: [
+          { index: 0, relevanceScore: 0.9 },
+          { index: 1, relevanceScore: 0.8 },
+        ],
+      })
+      .mockResolvedValueOnce({
+        results: [
+          { index: 0, relevanceScore: 0.9 },
+          { index: 1, relevanceScore: 0.8 },
+        ],
+      })
+
+    const result = await retrieveMultiHopWithRerank(
+      'a three-part fitness question',
+      'fitness-knowledge',
+      redis,
+    )
+
+    expect(result.length).toBeLessThanOrEqual(5)
+  })
+
+  it('falls back to a single sub-query when decomposition yields nothing usable', async () => {
+    mockPrimaryModelForDecomposition('')
+    const redis = buildMockRedis()
+
+    await retrieveMultiHopWithRerank('a single-focus fitness question', 'fitness-knowledge', redis)
+
+    expect(redis.get).toHaveBeenCalledTimes(1)
   })
 })

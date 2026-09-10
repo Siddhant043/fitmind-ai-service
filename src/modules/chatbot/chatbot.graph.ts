@@ -1,11 +1,11 @@
 import { Annotation, StateGraph, MessagesAnnotation, START, END } from '@langchain/langgraph'
 import { MemorySaver } from '@langchain/langgraph-checkpoint'
-import { HumanMessage, AIMessage, SystemMessage } from '@langchain/core/messages'
+import { AIMessage, SystemMessage } from '@langchain/core/messages'
 import { ToolNode } from '@langchain/langgraph/prebuilt'
 import type { RunnableConfig } from '@langchain/core/runnables'
 import { buildPrimaryModel, buildFallbackModel } from '../../providers/llm-provider.factory.js'
 import { invokeWithFallback, streamWithFallback } from '../../providers/llm-with-fallback.js'
-import { retrieveWithRerank } from '../rag/rag.retriever.js'
+import { retrieveWithRerank, retrieveMultiHopWithRerank } from '../rag/rag.retriever.js'
 import { formatContextForPrompt } from '../context-builder/context-builder.js'
 import type { UserContextBundle } from '../context-builder/context-builder.js'
 import type { Redis } from 'ioredis'
@@ -17,6 +17,7 @@ import {
 } from './workout-action-extractor.js'
 import { extractChallengeAction } from './challenge-action-extractor.js'
 import { buildChatTools } from './tools/index.js'
+import { evaluateQuery } from './query-evaluator.js'
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -24,6 +25,9 @@ const ChatState = Annotation.Root({
   ...MessagesAnnotation.spec,
   userContext: Annotation<UserContextBundle | null>({ reducer: (_, b) => b, default: () => null }),
   intent: Annotation<string>({ reducer: (_, b) => b, default: () => 'general' }),
+  needsUserData: Annotation<boolean>({ reducer: (_, b) => b, default: () => false }),
+  complexity: Annotation<'fast' | 'deep'>({ reducer: (_, b) => b, default: () => 'deep' }),
+  isMultiHop: Annotation<boolean>({ reducer: (_, b) => b, default: () => false }),
   retrievedDocs: Annotation<string[]>({ reducer: (_, b) => b, default: () => [] }),
   sessionId: Annotation<string>({ reducer: (_, b) => b, default: () => '' }),
   streamCallback: Annotation<((token: string) => void) | null>({
@@ -44,7 +48,6 @@ interface ChatConfigurable {
   userId?: string
 }
 
-const HISTORY_INTENTS = new Set(['workout_history', 'meal_history', 'progress_review'])
 const PLAN_CREATE_INTENTS = new Set(['workout_plan_create', 'workout_day_create'])
 const CHALLENGE_INTENTS = new Set(['challenge_suggest'])
 
@@ -137,45 +140,19 @@ function buildToolsForConfig(config: RunnableConfig) {
 
 // ─── Nodes ────────────────────────────────────────────────────────────────────
 
-async function classifyIntent(state: ChatStateType): Promise<Partial<ChatStateType>> {
+async function evaluateQueryNode(state: ChatStateType): Promise<Partial<ChatStateType>> {
   const lastMessage = state.messages.at(-1)
   const text = lastMessage && 'content' in lastMessage ? String(lastMessage.content) : ''
 
   if (SAFETY_KEYWORDS.test(text)) return { intent: 'safety' }
 
-  const model = buildPrimaryModel('fast')
-  const fallback = buildFallbackModel('fast')
-  const response = (await invokeWithFallback(model, fallback, [
-    new SystemMessage(
-      `Classify the following fitness/nutrition message into ONE of these intents:
-- fitness_rag: general fitness training knowledge (not about the user's own logs)
-- nutrition_rag: general nutrition/diet knowledge (not about the user's own logs)
-- workout_plan_create: user asks to create/design/make/build a workout plan, program, routine, or split
-- workout_day_create: user asks to create/make/give a single workout day (e.g. push/pull/leg/chest/back/arm day)
-- workout_history: user asks about THEIR OWN past/recent/last workout, exercise performance, weak lifts, or session review
-- meal_history: user asks about THEIR OWN logged meals, last meal, or how to improve a meal they ate
-- progress_review: user asks why they are not progressing, getting stronger, or how they are doing overall
-- challenge_suggest: user asks for a challenge, micro-challenge, weekly goal, or 7-day contract to opt into
-- general: everything else
-
-Reply with only the intent name.`,
-    ),
-    new HumanMessage(text),
-  ])) as { content: unknown }
-  const raw =
-    typeof response.content === 'string' ? response.content.trim().toLowerCase() : 'general'
-  const knownIntents = [
-    'fitness_rag',
-    'nutrition_rag',
-    'workout_plan_create',
-    'workout_day_create',
-    'workout_history',
-    'meal_history',
-    'progress_review',
-    'challenge_suggest',
-  ] as const
-  const intent = knownIntents.includes(raw as (typeof knownIntents)[number]) ? raw : 'general'
-  return { intent }
+  const evaluation = await evaluateQuery(text)
+  return {
+    intent: evaluation.intent,
+    needsUserData: evaluation.needsUserData,
+    complexity: evaluation.complexity,
+    isMultiHop: evaluation.isMultiHop,
+  }
 }
 
 async function retrieveFitnessRag(
@@ -186,9 +163,8 @@ async function retrieveFitnessRag(
   if (!redis) return { retrievedDocs: [] }
   const lastMessage = state.messages.at(-1)
   const query = lastMessage && 'content' in lastMessage ? String(lastMessage.content) : ''
-  const docs = await retrieveWithRerank(query, 'fitness-knowledge', redis).catch(
-    () => [] as string[],
-  )
+  const retrieve = state.isMultiHop ? retrieveMultiHopWithRerank : retrieveWithRerank
+  const docs = await retrieve(query, 'fitness-knowledge', redis).catch(() => [] as string[])
   return { retrievedDocs: docs }
 }
 
@@ -200,9 +176,8 @@ async function retrieveNutritionRag(
   if (!redis) return { retrievedDocs: [] }
   const lastMessage = state.messages.at(-1)
   const query = lastMessage && 'content' in lastMessage ? String(lastMessage.content) : ''
-  const docs = await retrieveWithRerank(query, 'nutrition-knowledge', redis).catch(
-    () => [] as string[],
-  )
+  const retrieve = state.isMultiHop ? retrieveMultiHopWithRerank : retrieveWithRerank
+  const docs = await retrieve(query, 'nutrition-knowledge', redis).catch(() => [] as string[])
   return { retrievedDocs: docs }
 }
 
@@ -213,7 +188,7 @@ async function callAgent(
   const tools = buildToolsForConfig(config)
   const streamCallback = state.streamCallback
 
-  if (HISTORY_INTENTS.has(state.intent) && streamCallback) {
+  if (state.needsUserData && streamCallback) {
     streamCallback('Looking up your logged data...\n\n')
   }
 
@@ -246,8 +221,9 @@ async function executeTools(
 
 async function generateHistoryResponse(state: ChatStateType): Promise<Partial<ChatStateType>> {
   const systemPrompt = buildSystemPrompt(state) + buildHistoryDataSection(state)
-  const primary = buildPrimaryModel('chat')
-  const fallback = buildFallbackModel('chat')
+  const tier = state.complexity === 'fast' ? 'fast' : 'chat'
+  const primary = buildPrimaryModel(tier)
+  const fallback = buildFallbackModel(tier)
   const allMessages = [new SystemMessage(systemPrompt), ...state.messages]
   const streamCallback = state.streamCallback
 
@@ -267,8 +243,9 @@ async function generateHistoryResponse(state: ChatStateType): Promise<Partial<Ch
 
 async function generateResponse(state: ChatStateType): Promise<Partial<ChatStateType>> {
   const systemPrompt = buildSystemPrompt(state)
-  const primary = buildPrimaryModel('chat')
-  const fallback = buildFallbackModel('chat')
+  const tier = state.complexity === 'fast' ? 'fast' : 'chat'
+  const primary = buildPrimaryModel(tier)
+  const fallback = buildFallbackModel(tier)
   const allMessages = [new SystemMessage(systemPrompt), ...state.messages]
 
   const streamCallback = state.streamCallback
@@ -361,7 +338,7 @@ function routeAfterAgent(state: ChatStateType): string {
 // ─── Graph ────────────────────────────────────────────────────────────────────
 
 const graph = new StateGraph(ChatState)
-  .addNode('classify_intent', classifyIntent)
+  .addNode('evaluate_query', evaluateQueryNode)
   .addNode('retrieve_fitness_rag', retrieveFitnessRag)
   .addNode('retrieve_nutrition_rag', retrieveNutritionRag)
   .addNode('agent', callAgent)
@@ -371,15 +348,15 @@ const graph = new StateGraph(ChatState)
   .addNode('stream_final_response', streamFinalResponse)
   .addNode('extract_workout_structure', extractWorkoutStructure)
   .addNode('safety_redirect', safetyRedirect)
-  .addEdge(START, 'classify_intent')
-  .addConditionalEdges('classify_intent', (state) => {
+  .addEdge(START, 'evaluate_query')
+  .addConditionalEdges('evaluate_query', (state) => {
     if (state.intent === 'safety') return 'safety_redirect'
     if (state.intent === 'fitness_rag') return 'retrieve_fitness_rag'
     if (state.intent === 'nutrition_rag') return 'retrieve_nutrition_rag'
     if (PLAN_CREATE_INTENTS.has(state.intent)) return 'generate_response'
     if (CHALLENGE_INTENTS.has(state.intent)) return 'generate_response'
     if (state.intent === 'general') return 'generate_response'
-    if (HISTORY_INTENTS.has(state.intent) && hasHistoryContextForIntent(state)) {
+    if (state.needsUserData && hasHistoryContextForIntent(state)) {
       return 'generate_history_response'
     }
     return 'agent'

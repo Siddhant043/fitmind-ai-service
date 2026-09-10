@@ -24,6 +24,29 @@ async function generateHyDE(query: string): Promise<string> {
   return typeof response.content === 'string' ? response.content : query
 }
 
+function parseLines(text: string, max: number): string[] {
+  return text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(0, max)
+}
+
+const MAX_SUB_QUERIES = 3
+
+async function decomposeQuery(query: string): Promise<string[]> {
+  const model = buildPrimaryModel('fast')
+  const response = await model.invoke([
+    new SystemMessage(
+      `Break the following fitness/nutrition question down into up to ${MAX_SUB_QUERIES} distinct sub-questions, each answerable independently from a knowledge base. Return only the sub-questions, one per line, no numbering. If the question is already single-focus, return it unchanged as the only line.`,
+    ),
+    new HumanMessage(query),
+  ])
+  const text = typeof response.content === 'string' ? response.content : ''
+  const subQueries = parseLines(text, MAX_SUB_QUERIES)
+  return subQueries.length > 0 ? subQueries : [query]
+}
+
 async function generateQueryVariants(query: string): Promise<string[]> {
   const model = buildPrimaryModel('fast')
   const response = await model.invoke([
@@ -33,11 +56,7 @@ async function generateQueryVariants(query: string): Promise<string[]> {
     new HumanMessage(query),
   ])
   const text = typeof response.content === 'string' ? response.content : ''
-  const variants = text
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .slice(0, 2)
+  const variants = parseLines(text, 2)
   return [query, ...variants]
 }
 
@@ -126,4 +145,31 @@ export async function retrieveWithRerank(
 
   await redis.set(cacheKey, JSON.stringify(topPassages), 'EX', RAG_CACHE_TTL)
   return topPassages
+}
+
+function mergeRankedResultsByBestRank(resultLists: string[][]): string[] {
+  const bestRank = new Map<string, number>()
+
+  for (const results of resultLists) {
+    results.forEach((text, rank) => {
+      const existing = bestRank.get(text)
+      if (existing === undefined || rank < existing) {
+        bestRank.set(text, rank)
+      }
+    })
+  }
+
+  return [...bestRank.entries()].sort((a, b) => a[1] - b[1]).map(([text]) => text)
+}
+
+export async function retrieveMultiHopWithRerank(
+  query: string,
+  namespace: RagNamespace,
+  redis: Redis,
+): Promise<string[]> {
+  const subQueries = await decomposeQuery(query)
+  const resultLists = await Promise.all(
+    subQueries.map((subQuery) => retrieveWithRerank(subQuery, namespace, redis)),
+  )
+  return mergeRankedResultsByBestRank(resultLists).slice(0, RERANK_TOP_N)
 }

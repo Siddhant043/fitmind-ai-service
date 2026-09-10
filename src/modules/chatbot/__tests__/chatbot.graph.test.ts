@@ -3,24 +3,44 @@ import type { Redis } from 'ioredis'
 
 // ── Hoisted mock state ────────────────────────────────────────────────────────
 
-const { mockFastInvoke, mockChatInvoke, mockChatStream, mockRetrieve } = vi.hoisted(() => ({
-  mockFastInvoke: vi.fn().mockResolvedValue({ content: 'general' }),
+const {
+  mockEvaluateInvoke,
+  mockFastChatInvoke,
+  mockChatInvoke,
+  mockChatStream,
+  mockRetrieve,
+  mockRetrieveMultiHop,
+} = vi.hoisted(() => ({
+  mockEvaluateInvoke: vi.fn().mockResolvedValue({
+    intent: 'general',
+    needsUserData: false,
+    complexity: 'deep',
+    isMultiHop: false,
+  }),
+  mockFastChatInvoke: vi.fn().mockResolvedValue({ content: 'Quick fast-tier answer.' }),
   mockChatInvoke: vi.fn().mockResolvedValue({ content: 'Here is your fitness advice.' }),
   mockChatStream: vi.fn().mockImplementation(async function* () {
     yield { content: 'Hello' }
     yield { content: ' world' }
   }),
   mockRetrieve: vi.fn().mockResolvedValue(['retrieved-doc-1', 'retrieved-doc-2']),
+  mockRetrieveMultiHop: vi.fn().mockResolvedValue(['multi-hop-doc-1', 'multi-hop-doc-2']),
 }))
 
 vi.mock('../../../providers/llm-provider.factory.js', () => ({
   buildPrimaryModel: vi.fn().mockImplementation((task: string) => {
-    if (task === 'fast') return { invoke: mockFastInvoke }
+    if (task === 'fast') {
+      return {
+        invoke: mockFastChatInvoke,
+        withStructuredOutput: vi.fn().mockReturnValue({ invoke: mockEvaluateInvoke }),
+      }
+    }
     const chatModel = { invoke: mockChatInvoke, stream: mockChatStream, bindTools: vi.fn() }
     chatModel.bindTools.mockReturnValue({ invoke: mockChatInvoke })
     return chatModel
   }),
   buildFallbackModel: vi.fn().mockReturnValue(null),
+  resolveStructuredOutputMethod: vi.fn().mockReturnValue('functionCalling'),
 }))
 
 vi.mock('../tools/index.js', () => ({
@@ -29,6 +49,7 @@ vi.mock('../tools/index.js', () => ({
 
 vi.mock('../../rag/rag.retriever.js', () => ({
   retrieveWithRerank: mockRetrieve,
+  retrieveMultiHopWithRerank: mockRetrieveMultiHop,
 }))
 
 import { chatbotGraph } from '../chatbot.graph.js'
@@ -48,15 +69,31 @@ function nextThread() {
   return `test-thread-${++threadCounter}`
 }
 
+function mockEvaluation(
+  overrides: Partial<
+    Record<'intent' | 'complexity', string> & { needsUserData: boolean; isMultiHop: boolean }
+  > = {},
+) {
+  mockEvaluateInvoke.mockResolvedValue({
+    intent: 'general',
+    needsUserData: false,
+    complexity: 'deep',
+    isMultiHop: false,
+    ...overrides,
+  })
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
-  mockFastInvoke.mockResolvedValue({ content: 'general' })
+  mockEvaluation()
+  mockFastChatInvoke.mockResolvedValue({ content: 'Quick fast-tier answer.' })
   mockChatInvoke.mockResolvedValue(new AIMessage({ content: 'Here is your fitness advice.' }))
   mockChatStream.mockImplementation(async function* () {
     yield { content: 'Hello' }
     yield { content: ' world' }
   })
   mockRetrieve.mockResolvedValue(['retrieved-doc-1'])
+  mockRetrieveMultiHop.mockResolvedValue(['multi-hop-doc-1', 'multi-hop-doc-2'])
 })
 
 // ── tests ─────────────────────────────────────────────────────────────────────
@@ -80,13 +117,13 @@ describe('chatbotGraph — safety routing', () => {
       { messages: [new HumanMessage('I have shoulder pain after surgery')], streamCallback: null },
       { configurable: { thread_id: nextThread() } },
     )
-    expect(mockFastInvoke).not.toHaveBeenCalled()
+    expect(mockEvaluateInvoke).not.toHaveBeenCalled()
   })
 })
 
 describe('chatbotGraph — fitness_rag routing', () => {
   it('calls retrieveWithRerank with fitness-knowledge namespace', async () => {
-    mockFastInvoke.mockResolvedValue({ content: 'fitness_rag' })
+    mockEvaluation({ intent: 'fitness_rag' })
 
     await chatbotGraph.invoke(
       {
@@ -106,7 +143,7 @@ describe('chatbotGraph — fitness_rag routing', () => {
 
 describe('chatbotGraph — nutrition_rag routing', () => {
   it('calls retrieveWithRerank with nutrition-knowledge namespace', async () => {
-    mockFastInvoke.mockResolvedValue({ content: 'nutrition_rag' })
+    mockEvaluation({ intent: 'nutrition_rag' })
 
     await chatbotGraph.invoke(
       {
@@ -126,7 +163,7 @@ describe('chatbotGraph — nutrition_rag routing', () => {
 
 describe('chatbotGraph — general routing (no RAG)', () => {
   it('does not call retrieveWithRerank for general intent', async () => {
-    mockFastInvoke.mockResolvedValue({ content: 'general' })
+    mockEvaluation({ intent: 'general' })
 
     await chatbotGraph.invoke(
       { messages: [new HumanMessage('Tell me a fitness joke')], streamCallback: null },
@@ -140,7 +177,7 @@ describe('chatbotGraph — general routing (no RAG)', () => {
 
 describe('chatbotGraph — streaming', () => {
   it('calls streamCallback for each token when provided', async () => {
-    mockFastInvoke.mockResolvedValue({ content: 'general' })
+    mockEvaluation({ intent: 'general' })
     const streamCallback = vi.fn()
 
     await chatbotGraph.invoke(
@@ -154,7 +191,7 @@ describe('chatbotGraph — streaming', () => {
   })
 
   it('uses model.invoke (not stream) when streamCallback is null', async () => {
-    mockFastInvoke.mockResolvedValue({ content: 'general' })
+    mockEvaluation({ intent: 'general' })
 
     await chatbotGraph.invoke(
       { messages: [new HumanMessage('What is TDEE?')], streamCallback: null },
@@ -168,7 +205,7 @@ describe('chatbotGraph — streaming', () => {
 
 describe('chatbotGraph — meal_history fast path', () => {
   it('uses lastMealDetail from context without agent tool loop', async () => {
-    mockFastInvoke.mockResolvedValue({ content: 'meal_history' })
+    mockEvaluation({ intent: 'meal_history', needsUserData: true })
 
     const userContext = {
       userId: 'u1',
@@ -219,7 +256,7 @@ describe('chatbotGraph — meal_history fast path', () => {
 
 describe('chatbotGraph — workout_history routing', () => {
   it('routes workout history questions to agent without RAG', async () => {
-    mockFastInvoke.mockResolvedValue({ content: 'workout_history' })
+    mockEvaluation({ intent: 'workout_history', needsUserData: true })
 
     await chatbotGraph.invoke(
       {
@@ -236,7 +273,7 @@ describe('chatbotGraph — workout_history routing', () => {
 
 describe('chatbotGraph — user context injection', () => {
   it('injects user context section into system prompt when provided', async () => {
-    mockFastInvoke.mockResolvedValue({ content: 'general' })
+    mockEvaluation({ intent: 'general' })
 
     const userContext = {
       userId: 'u1',
@@ -273,5 +310,81 @@ describe('chatbotGraph — user context injection', () => {
     const callArgs = mockChatInvoke.mock.calls[0]?.[0] as Array<{ content: string }> | undefined
     const systemMsg = callArgs?.find((m) => m.content?.includes('Raj'))
     expect(systemMsg).toBeDefined()
+  })
+})
+
+describe('chatbotGraph — complexity-driven model tier', () => {
+  it('uses the fast model tier for generateResponse when complexity is fast', async () => {
+    mockEvaluation({ intent: 'general', complexity: 'fast' })
+
+    await chatbotGraph.invoke(
+      { messages: [new HumanMessage('How many calories in an egg?')], streamCallback: null },
+      { configurable: { thread_id: nextThread(), userId: 'u1' } },
+    )
+
+    expect(mockFastChatInvoke).toHaveBeenCalled()
+    expect(mockChatInvoke).not.toHaveBeenCalled()
+  })
+
+  it('uses the chat model tier for generateResponse when complexity is deep', async () => {
+    mockEvaluation({ intent: 'general', complexity: 'deep' })
+
+    await chatbotGraph.invoke(
+      {
+        messages: [new HumanMessage('Design me a periodized strength program')],
+        streamCallback: null,
+      },
+      { configurable: { thread_id: nextThread(), userId: 'u1' } },
+    )
+
+    expect(mockChatInvoke).toHaveBeenCalled()
+  })
+
+  it('keeps the tool-calling agent on the chat tier even when complexity is fast', async () => {
+    mockEvaluation({ intent: 'workout_history', needsUserData: true, complexity: 'fast' })
+
+    await chatbotGraph.invoke(
+      { messages: [new HumanMessage('How was my last workout?')], streamCallback: null },
+      { configurable: { thread_id: nextThread(), userId: 'u1', redis: buildMockRedis() } },
+    )
+
+    expect(mockChatInvoke).toHaveBeenCalled()
+  })
+})
+
+describe('chatbotGraph — multi-hop RAG routing', () => {
+  it('uses retrieveMultiHopWithRerank for fitness_rag when isMultiHop is true', async () => {
+    mockEvaluation({ intent: 'fitness_rag', isMultiHop: true })
+
+    await chatbotGraph.invoke(
+      {
+        messages: [new HumanMessage('Compare linear vs undulating periodization for hypertrophy')],
+        streamCallback: null,
+      },
+      { configurable: { thread_id: nextThread(), redis: buildMockRedis() } },
+    )
+
+    expect(mockRetrieveMultiHop).toHaveBeenCalledWith(
+      expect.any(String),
+      'fitness-knowledge',
+      expect.anything(),
+    )
+    expect(mockRetrieve).not.toHaveBeenCalled()
+  })
+
+  it('uses retrieveWithRerank for nutrition_rag when isMultiHop is false', async () => {
+    mockEvaluation({ intent: 'nutrition_rag', isMultiHop: false })
+
+    await chatbotGraph.invoke(
+      { messages: [new HumanMessage('How much protein do I need?')], streamCallback: null },
+      { configurable: { thread_id: nextThread(), redis: buildMockRedis() } },
+    )
+
+    expect(mockRetrieve).toHaveBeenCalledWith(
+      expect.any(String),
+      'nutrition-knowledge',
+      expect.anything(),
+    )
+    expect(mockRetrieveMultiHop).not.toHaveBeenCalled()
   })
 })
